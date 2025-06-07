@@ -1,0 +1,12 @@
+{
+    "vault_path": "/mnt/c/Users/chtur/OneDrive/Documents/Obsidian/MyVault",
+    "file_extensions": [
+        ".md",
+        ".txt"
+    ],
+    "ignored_directories": [
+        ".obsidian",
+        ".git",
+        ".trash"
+    ]
+}
