@@ -14,6 +14,12 @@ type Vault struct {
 	config *Config
 }
 
+type SearchResult struct {
+	Note    Note     `json:"note"`
+	Matches []string `json:"matches"`
+	Score   int      `json:"score"`
+}
+
 type Note struct {
 	Path         string    `json:"path"`
 	Name         string    `json:"name"`
@@ -32,6 +38,14 @@ func NewVault(config *Config) (*Vault, error) {
 	}
 
 	return &Vault{config: config}, nil
+}
+
+func (v *Vault) GetConfig() *Config {
+	return &Config{
+		VaultPath:          v.config.VaultPath,
+		FileExtensions:     v.config.FileExtensions,
+		IgnoredDirectories: v.config.IgnoredDirectories,
+	}
 }
 
 func validateVaultPath(vaultPath string) error {
@@ -248,4 +262,126 @@ func removeDuplicates(tags []string) []string {
 	}
 
 	return result
+}
+
+func (v *Vault) SearchNotes(query, tagFilter string) ([]SearchResult, error) {
+	notes, err := v.ListNotes()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []SearchResult
+	queryLower := strings.ToLower(query)
+
+	for _, note := range notes {
+		var matches []string
+		score := 0
+
+		// Filter by tag if specified
+		if tagFilter != "" {
+			hasTag := false
+			for _, tag := range note.Tags {
+				if strings.EqualFold(tag, tagFilter) {
+					hasTag = true
+					break
+				}
+			}
+			if !hasTag {
+				continue
+			}
+		}
+
+		// Search in title
+		if note.Title != "" && strings.Contains(strings.ToLower(note.Title), queryLower) {
+			matches = append(matches, fmt.Sprintf("Title: %s", note.Title))
+			score += 10 // Higher weight for title matches
+		}
+
+		// Search in filename
+		if strings.Contains(strings.ToLower(note.Name), queryLower) {
+			matches = append(matches, fmt.Sprintf("Filename: %s", note.Name))
+			score += 5
+		}
+
+		// Search in content
+		contentMatches, contentScore := v.searchInContent(note.Path, queryLower)
+		matches = append(matches, contentMatches...)
+		score += contentScore
+
+		// Search in tags
+		for _, tag := range note.Tags {
+			if strings.Contains(strings.ToLower(tag), queryLower) {
+				matches = append(matches, fmt.Sprintf("Tag: #%s", tag))
+				score += 3
+			}
+		}
+
+		// Include in results if we found matches
+		if len(matches) > 0 {
+			results = append(results, SearchResult{
+				Note:    note,
+				Matches: matches,
+				Score:   score,
+			})
+		}
+	}
+
+	// Sort by score (highest first)
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].Score < results[j].Score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func (v *Vault) searchInContent(filePath, query string) ([]string, int) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, 0
+	}
+
+	contentStr := strings.ToLower(string(content))
+	var matches []string
+	score := 0
+
+	lines := strings.Split(string(contentStr), "\n")
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), query) {
+			// Show context around the match
+			context := strings.TrimSpace(line)
+			if len(context) > 100 {
+				// Truncate long lines
+				if idx := strings.Index(strings.ToLower(context), query); idx != -1 {
+					start := max(0, idx-30)
+					end := min(len(context), idx+70)
+					context = "..." + context[start:end] + "..."
+				} else {
+					context = context[:100] + "..."
+				}
+			}
+			matches = append(matches, fmt.Sprintf("Line %d: %s", i+1, context))
+			score += 1
+		}
+	}
+
+	return matches, score
+}
+
+// Helper functions for min/max
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
